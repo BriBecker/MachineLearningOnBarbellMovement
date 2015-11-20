@@ -1,0 +1,117 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Brian Becker"
+date: "Thursday, November 19, 2015"
+output: html_document
+---
+## Abstract
+To classify the type of barbell movement in the `classe` variable, we construct a polynnomial kernel-based support vector machine (svm) using the `caret` package in R. We first extract the features that are not missing data, then remove a few more variables which we would not think have any predictive power. Now, using 54 predictor variables, and only ten thousand randomly sampled observations (for computational limits) we train our svm model using 10-fold cross-validation repeated three times. We obtain strong results with less than 2 percent out of sample error.
+
+
+## Data BackGround
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+### Load the data and required packages
+```{r, echo = TRUE, cache = TRUE,  warning = FALSE, message = FALSE}
+library(caret)
+        library(kernlab) # dependent package for building SVMs
+library(dplyr)
+library(doParallel) # for parallel processing
+
+setwd("C:/Users/Brian/OneDrive/Documents/School/Coursera/Data Science Specialization/08 Practical Machine Learning")
+pml_train <- read.csv("pml-training.csv", stringsAsFactors = T, na.strings = c("", "NA"))[-1]
+pml_test <- read.csv("pml-testing.csv")[-1]
+```
+
+## Feature Extraction
+Taking a peak at the data, we see that we have over 19 thousand observations with 159 variables. 
+```{r}
+dim(pml_train)
+```
+
+Using the `View` function, we can already see many missing values. We remove the variables with missing data and also remove the variables that we we think may not be useful.
+```{r, cache = TRUE}
+pml_train_noNA <- pml_train[, sapply(pml_train, function(x) !any(is.na(x))) ]
+# I don't think the following variables would hold preditive power in barbell movements
+train <- select(pml_train_noNA, -user_name, -cvtd_timestamp, -raw_timestamp_part_1, -raw_timestamp_part_2)
+# check our data now
+str(train)
+```
+
+We still have over nineteen thousand observations. This will take a long time to fit a SVM model to. We will try randomly sampling ten thousand observations from this data set to speed up our model building process.
+```{r, cache = TRUE}
+set.seed(9)
+train_small <- sample_n(train, 10000)
+plot(train_small$classe)
+```
+
+Notice that we still have a good representation of the five classes after random sampling. 
+
+## Training our Model
+Now, we build our model. Note: Using smaller datasets of only one thousand observations we have determined that our polynomial kernel-based Support Vector Machine model seems to perform well with the following parameters:
+
+- degree = 3
+- Scale = 0.3
+- Cost = 0.01
+```{r, cache = TRUE}
+polyGrid <- expand.grid(degree = 3,
+                        scale =  0.3,
+                        C = 0.01)
+```
+
+To evaluate our model's accuracy, we use 10-fold cross-validation repeated twice (higher fold cross validation repeated more times would be more accurate but would be much more computationally expensive).
+```{r, cache = TRUE}
+fitControl = trainControl(method = "repeatedcv", number = 10, repeats = 3)
+```
+
+The following R-code parallizes the model-building process, fits the model, and applys the aforementioned cross validation to better understand the out of error sample.
+
+```{r, cache = TRUE}
+# set up doParallel 
+cl <- makeCluster(4)    # 4 core-machine
+registerDoParallel(cl)
+
+start.time <- Sys.time()
+svmPoly <- train(classe ~ ., data = train_small, method = "svmPoly",
+                 trControl = fitControl,
+                 tuneGrid = polyGrid)
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+time.taken
+```
+
+We observe our model and its prediction accuracy by simply calling it.
+```{r}
+svmPoly
+```
+
+This illustrates that fitting our model on nine tenths of our ten thousand observations results in about 98% accuracy on the last tenth of our data. Further, with such a low accuracy standard deviation, we can be fairly certain that our out of sample error will be very close to 98%.
+
+These results are pretty good and we hypothesize that our SVM would easily be improved by using ALL of the available training data to fit the model (although it would result in more computational time). To better understand the predictive power of our 54 features we can plot the top important features:
+```{r, cache = TRUE}
+plot(varImp(svmPoly), top = 10)
+```
+
+## Predicting on the Test Set
+We use our svm model to predict on the test set and output our results into text files to submit to Coursera.org.
+```{r, cache = TRUE}
+svmPredictions <- as.character(predict(svmPoly, newdata = pml_test))
+
+pml_write_files = function(x){
+        n = length(x)
+        for(i in 1:n){
+                filename = paste0("./predict/problem_id_", i, ".txt")
+                write.table(x[i], file = filename, quote = F, row.names = F, col.names = F)
+        }
+}
+```
+
+Using this function we write 20 txt files to submit to Coursera. Here are the results of our predictions.
+```{r, cache = T}
+svmPredictions
+```
+
+Using these predictions, we submitted 19 out of the 20 test cases correctly.
+
+## Conclusion
+This project illustrates a few things. First, that removing all of the features with the missing data (which was nearly 100), still yielded enough features to predict accurately. Next, our polynomial svm model still performed well, even with just using nearly half of the available training data. We could expect to perform even better if we used the rest of the nine thousand observations.
